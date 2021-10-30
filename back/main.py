@@ -1,12 +1,41 @@
 from fastapi import FastAPI
 from aiohttp import ClientSession
 from time import time
+from typing import Dict, TypedDict, Union, Optional
 
 app = FastAPI()
 session = ClientSession()
 
+Number = Union[float, int]
 
-def timed_cache(seconds, maxsize=25):
+
+class CEXPrice(TypedDict):
+    amount: Number
+    price: Number
+    full_price: Number
+
+
+class Price(TypedDict):
+    amount: Number
+    price: Number
+    full_price: Number
+    exchanges: Dict[str, CEXPrice]
+
+
+class Prices(TypedDict):
+    bid: Price
+    ask: Price
+
+
+
+no_orders = {
+    "ask": [],
+    "bid": []
+}
+
+
+
+def timed_cache(seconds=5 * 60, maxsize=25):
     def cached(f):
         values = {}
         async def wrapper(pair):
@@ -27,10 +56,10 @@ def timed_cache(seconds, maxsize=25):
     return cached
 
 
-@timed_cache(60)
+@timed_cache()
 async def get_binance(pair):
-    endpoint = "https://api3.binance.com"
-    async with session.get(endpoint + "/api/v3/depth", params={"symbol": "".join(pair), "limit": 1000}) as resp:
+    endpoint = "https://api3.binance.com/api/v3/depth"
+    async with session.get(endpoint, params={"symbol": "".join(pair), "limit": 100}) as resp:
         result = await resp.json()
         keys = {"bid": "bids", "ask": "asks"}
         return {
@@ -41,13 +70,57 @@ async def get_binance(pair):
                     "exchange": "binance",
                 }
                 for order in data
+            ] if data else []
+            for key in keys
+            for data in [result.get(keys[key])]
+        }
+
+
+@timed_cache()
+async def get_gate(pair):
+    endpoint = "https://api.gateio.ws/api/v4/spot/order_book"
+    async with session.get(endpoint, params={"currency_pair": "_".join(pair), "limit": 100}) as resp:
+        result = await resp.json()
+        keys = {"bid": "bids", "ask": "asks"}
+        return {
+            key: [
+                {
+                    "price": float(order[0]),
+                    "amount": float(order[1]),
+                    "exchange": "gateio",
+                }
+                for order in data
             ]
             for key in keys
             for data in [result[keys[key]]]
         }
 
 
-getters = [get_binance]
+@timed_cache()
+async def get_kraken(pair):
+    endpoint = "https://api.kraken.com/0/public/Depth"
+    async with session.get(endpoint, params={"pair": "".join(pair), "count": 100}) as resp:
+        result = (await resp.json()).get("result")
+        if not result:
+            return no_orders
+        keys = {"bid": "bids", "ask": "asks"}
+        pair = [*result.keys()][0]
+        print(result[pair])
+        return {
+            key: [
+                {
+                    "price": float(order[0]),
+                    "amount": float(order[1]),
+                    "exchange": "kraken",
+                }
+                for order in data
+            ]
+            for key in keys
+            for data in [result[pair][keys[key]]]
+        }
+
+
+getters = [get_binance, get_gate, get_kraken]
 
 
 async def get_orders(pair):
@@ -117,6 +190,8 @@ async def get_prices(pair, amount):
     }
 
 
-@app.get("/{source}:{dest}")
-async def hello(source: str, dest: str, amount: int):
+@app.get("/{source}:{dest}", response_model=Prices)
+async def main_method(source: str, dest: str, amount: int):
+    """retrieve current price for source:destionation pair"""
+    print(await get_prices([source, dest], amount))
     return await get_prices([source, dest], amount)
