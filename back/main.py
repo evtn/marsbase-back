@@ -1,7 +1,8 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from aiohttp import ClientSession
 from time import time
-from typing import Dict, TypedDict, Union, Optional
+from typing import Dict, TypedDict, Union, Optional 
+import ccxt
 
 app = FastAPI()
 session = ClientSession()
@@ -23,120 +24,105 @@ class Price(TypedDict):
 
 
 class Prices(TypedDict):
-    bid: Price
-    ask: Price
+    bids: Price
+    asks: Price
 
 
-
-no_orders = {
-    "ask": [],
-    "bid": []
-}
+no_orders = {"asks": [], "bids": []}
 
 
-
-def timed_cache(seconds=5 * 60, maxsize=25):
+def timed_cache(seconds=5 * 60, maxsize=50):
     def cached(f):
         values = {}
+
         async def wrapper(pair):
             print(values.keys())
             pair = tuple(pair)
             if pair in values:
                 if values[pair]["ts"] > time():
                     print(f"USING CACHED {pair}")
-                    return values[pair]["value"]
+                    return {**values[pair]["value"], "cached": True}
             value = await f(pair)
             values[pair] = {"ts": time() + seconds, "value": value}
             print(f"CACHING {pair}")
             if len(values) > maxsize:
                 print(f"TRIMMING CACHE {pair}")
                 values.pop(min(values, key=lambda key: values[key]["ts"]))
-            return value
+            return {**value, "cached": False}
+
         return wrapper
+
     return cached
 
 
-@timed_cache()
-async def get_binance(pair):
-    endpoint = "https://api3.binance.com/api/v3/depth"
-    async with session.get(endpoint, params={"symbol": "".join(pair), "limit": 100}) as resp:
-        result = await resp.json()
-        keys = {"bid": "bids", "ask": "asks"}
+def gen_getter(exchange):
+    @timed_cache(3600)
+    async def getter(pair, is_reversed=False):
+        try:
+            result = exchange.fetch_l2_order_book("/".join(pair), 100)
+        except ccxt.base.errors.BadSymbol:
+            if not is_reversed:
+                return await getter(pair[::-1], True)
+            return {"bids": [], "asks": []}
         return {
-            key: [
-                {
-                    "price": float(order[0]),
-                    "amount": float(order[1]),
-                    "exchange": "binance",
-                }
-                for order in data
-            ] if data else []
-            for key in keys
-            for data in [result.get(keys[key])]
+            key: sorted(
+                [
+                    {
+                        "price": order[0],
+                        "amount": order[1],
+                        "exchange": exchange.id
+                    }
+                    for order in result[key]
+                ],
+                key=lambda x: x["amount"],
+                reverse=key == "bids",
+            )
+            for key in ["asks", "bids"]
         }
 
-
-@timed_cache()
-async def get_gate(pair):
-    endpoint = "https://api.gateio.ws/api/v4/spot/order_book"
-    async with session.get(endpoint, params={"currency_pair": "_".join(pair), "limit": 100}) as resp:
-        result = await resp.json()
-        keys = {"bid": "bids", "ask": "asks"}
-        return {
-            key: [
-                {
-                    "price": float(order[0]),
-                    "amount": float(order[1]),
-                    "exchange": "gateio",
-                }
-                for order in data
-            ]
-            for key in keys
-            for data in [result[keys[key]]]
-        }
+    return getter
 
 
-@timed_cache()
-async def get_kraken(pair):
-    endpoint = "https://api.kraken.com/0/public/Depth"
-    async with session.get(endpoint, params={"pair": "".join(pair), "count": 100}) as resp:
-        result = (await resp.json()).get("result")
-        if not result:
-            return no_orders
-        keys = {"bid": "bids", "ask": "asks"}
-        pair = [*result.keys()][0]
-        print(result[pair])
-        return {
-            key: [
-                {
-                    "price": float(order[0]),
-                    "amount": float(order[1]),
-                    "exchange": "kraken",
-                }
-                for order in data
-            ]
-            for key in keys
-            for data in [result[pair][keys[key]]]
-        }
+exchanges = [
+    getattr(ccxt, x)()
+    for x in [
+        "binance",
+        "bitfinex",
+        "exmo",
+        "ftx",
+        "gateio",
+        "hitbtc",
+        "huobi",
+        "kraken",
+        "kucoin",
+        "okcoin",
+        "okex",
+        "poloniex",
+        "yobit",
+    ]
+]
 
 
-getters = [get_binance, get_gate, get_kraken]
+getters = [
+    gen_getter(cex)
+    for cex in exchanges
+]
 
 
 async def get_orders(pair):
     orders = {
-        "bid": [],
-        "ask": [], 
+        "bids": [],
+        "asks": [],
     }
     for getter in getters:
         cex_orders = await getter(pair)
-        orders["bid"].extend(cex_orders["bid"])
-        orders["ask"].extend(cex_orders["ask"])
+        orders["bids"].extend(cex_orders["bids"])
+        orders["asks"].extend(cex_orders["asks"])
     return {
         key: sorted(
             orders[key], 
             key=lambda order: order["price"], 
-            reverse=(key == "bid")
+            reverse=(key == "bids")
         )
         for key in orders
     }
@@ -144,12 +130,12 @@ async def get_orders(pair):
 
 async def fill_orders(pair, amount):
     filled = {
-        "bid": [],
-        "ask": [],
+        "bids": [],
+        "asks": [],
     }
 
     orders = await get_orders(pair)
-    
+
     for key in filled:
         filled_amount = 0
 
@@ -180,18 +166,34 @@ def compose_prices(order_list):
 
 async def get_prices(pair, amount):
     filled = await fill_orders(pair, amount)
-    keys = ["bid", "ask"]
+    keys = ["bids", "asks"]
     return {
-        key: {
-            **calc_prices(filled[key]),
-            "exchanges": compose_prices(filled[key])
-        }
+        key: {**calc_prices(filled[key]), "exchanges": compose_prices(filled[key])}
         for key in keys
     }
 
 
-@app.get("/{source}:{dest}", response_model=Prices)
+@app.get("/retrieve/{source}/{dest}", response_model=Prices)
 async def main_method(source: str, dest: str, amount: int):
     """retrieve current price for source:destionation pair"""
-    print(await get_prices([source, dest], amount))
     return await get_prices([source, dest], amount)
+
+
+@app.get("/update/{source}/{dest}")
+async def progress_bar(source: str, dest: str, i: int):
+    if 0 <= i < len(exchanges):
+        result = await getters[i]([source, dest])
+        if result["cached"]:
+            return {
+                "next": None,
+            }
+        return {
+            "next": {
+                "name": exchanges[i + 1].name,
+                "index": i + 1
+            } if i + 1 < len(exchanges) else None,
+        }
+    raise HTTPException(status_code=400, detail=f"Invalid exchange index, use number from 0 to {len(exchanges) - 1}")
+
+
+        
