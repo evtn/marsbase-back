@@ -155,7 +155,8 @@ def calc_prices(order_list):
     amount = sum(order["amount"] for order in order_list)
     full_price = sum(order["price"] * order["amount"] for order in order_list)
     price = full_price / amount
-    return {"amount": amount, "price": price, "full_price": full_price}
+    extra_fields = ["name"] if all("name" in order for order in order_list) else []
+    return {"amount": amount, "price": price, "full_price": full_price, **{order_list[0][ef] for ef in extra_fields}}
 
 
 def compose_prices(order_list):
