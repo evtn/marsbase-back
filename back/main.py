@@ -15,6 +15,7 @@ class CEXPrice(TypedDict):
     amount: Number
     price: Number
     full_price: Number
+    name: str
 
 
 class Price(TypedDict):
@@ -71,7 +72,8 @@ def gen_getter(exchange):
                     {
                         "price": order[0],
                         "amount": order[1],
-                        "exchange": exchange.id
+                        "exchange": exchange.id,
+                        "name": exchange.name,
                     }
                     for order in result[key]
                 ],
