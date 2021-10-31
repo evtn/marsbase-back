@@ -1,8 +1,9 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from aiohttp import ClientSession
 from time import time
-from typing import Dict, TypedDict, Union, Optional 
+from typing import Dict, TypedDict, Union, Optional
 import ccxt
 
 app = FastAPI()
@@ -100,10 +101,7 @@ exchanges = [
 ]
 
 
-getters = [
-    gen_getter(cex)
-    for cex in exchanges
-]
+getters = [gen_getter(cex) for cex in exchanges]
 
 
 async def get_orders(pair):
@@ -117,9 +115,7 @@ async def get_orders(pair):
         orders["asks"].extend(cex_orders["asks"])
     return {
         key: sorted(
-            orders[key], 
-            key=lambda order: order["price"], 
-            reverse=(key == "bids")
+            orders[key], key=lambda order: order["price"], reverse=(key == "bids")
         )
         for key in orders
     }
@@ -150,7 +146,12 @@ def calc_prices(order_list):
     full_price = sum(order["price"] * order["amount"] for order in order_list)
     price = full_price / amount if amount else 0
     extra_fields = ["name"] if all("name" in order for order in order_list) else []
-    return {"amount": amount, "price": price, "full_price": full_price, **{ef: order_list[0][ef] for ef in extra_fields if len(order_list) > 0}}
+    return {
+        "amount": amount,
+        "price": price,
+        "full_price": full_price,
+        **{ef: order_list[0][ef] for ef in extra_fields if len(order_list) > 0},
+    }
 
 
 def compose_prices(order_list):
@@ -186,13 +187,14 @@ async def progress_bar(source: str, dest: str, i: int):
                 "next": None,
             }
         return {
-            "next": {
-                "name": exchanges[i + 1].name,
-                "index": i + 1
-            } if i + 1 < len(exchanges) else None,
+            "next": {"name": exchanges[i + 1].name, "index": i + 1}
+            if i + 1 < len(exchanges)
+            else None,
         }
-    raise HTTPException(status_code=400, detail=f"Invalid exchange index, use number from 0 to {len(exchanges) - 1}")
-
+    raise HTTPException(
+        status_code=400,
+        detail=f"Invalid exchange index, use number from 0 to {len(exchanges) - 1}",
+    )
 
 
 app.add_middleware(
@@ -200,4 +202,6 @@ app.add_middleware(
     allow_origins=["*"],
     allow_headers=["*"],
 )
-        
+
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
