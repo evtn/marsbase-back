@@ -38,17 +38,13 @@ def timed_cache(seconds=5 * 60, maxsize=50):
         values = {}
 
         async def wrapper(pair, *args):
-            print(values.keys())
             pair = tuple(pair)
             if pair in values:
                 if values[pair]["ts"] > time():
-                    print(f"USING CACHED {pair}")
                     return {**values[pair]["value"], "cached": True}
             value = await f(pair, *args)
             values[pair] = {"ts": time() + seconds, "value": value}
-            print(f"CACHING {pair}")
             if len(values) > maxsize:
-                print(f"TRIMMING CACHE {pair}")
                 values.pop(min(values, key=lambda key: values[key]["ts"]))
             return {**value, "cached": False}
 
