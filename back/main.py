@@ -12,7 +12,7 @@ session = ClientSession()
 
 @app.get("/")
 async def read_index():
-    return FileResponse('index.html')
+    return FileResponse('static/index.html')
 
 Number = Union[float, int]
 
