@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from aiohttp import ClientSession
 from time import time
 from typing import Dict, TypedDict, Union, Optional 
@@ -196,4 +197,10 @@ async def progress_bar(source: str, dest: str, i: int):
     raise HTTPException(status_code=400, detail=f"Invalid exchange index, use number from 0 to {len(exchanges) - 1}")
 
 
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_headers=["*"],
+)
         
