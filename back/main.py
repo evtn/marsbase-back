@@ -63,8 +63,6 @@ def gen_getter(exchange):
         try:
             result = exchange.fetch_l2_order_book("/".join(pair), 100)
         except:
-            if not is_reversed:
-                return await getter(pair[::-1], True)
             return {"bids": [], "asks": []}
         return {
             key: sorted(
@@ -156,7 +154,7 @@ def calc_prices(order_list):
     full_price = sum(order["price"] * order["amount"] for order in order_list)
     price = full_price / amount
     extra_fields = ["name"] if all("name" in order for order in order_list) else []
-    return {"amount": amount, "price": price, "full_price": full_price, **{order_list[0][ef] for ef in extra_fields}}
+    return {"amount": amount, "price": price, "full_price": full_price, **{ef: order_list[0][ef] for ef in extra_fields}}
 
 
 def compose_prices(order_list):
