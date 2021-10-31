@@ -5,9 +5,14 @@ from aiohttp import ClientSession
 from time import time
 from typing import Dict, TypedDict, Union, Optional
 import ccxt
+from starlette.responses import FileResponse 
 
 app = FastAPI()
 session = ClientSession()
+
+@app.get("/")
+async def read_index():
+    return FileResponse('index.html')
 
 Number = Union[float, int]
 
