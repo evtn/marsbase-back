@@ -61,7 +61,7 @@ def gen_getter(exchange):
     async def getter(pair, is_reversed=False):
         try:
             result = exchange.fetch_l2_order_book("/".join(pair), 100)
-        except ccxt.base.errors.BadSymbol:
+        except:
             if not is_reversed:
                 return await getter(pair[::-1], True)
             return {"bids": [], "asks": []}
